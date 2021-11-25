@@ -1,2 +1,2 @@
 # Quarks
-A future .io style game
+My version of the game "life"

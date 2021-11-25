@@ -1,6 +1,8 @@
+import math
 from os import path
 
 import pygame
+from random import randint as random
 
 
 class App:
@@ -59,20 +61,22 @@ class App:
     def computation_zones(self): return tuple(self.__computation_zones)
 
 
-#DO TO
 class GameObject:
     """Класс всех игровых обьектов, управляемых App-хой. Абстрактный класс.
     Требует у наслед. классов присутствие интерфейса формы"""
     visibility = []
 
-    def __init__(self, x, y, color, *interface_attributes):
+    def __init__(self, x, y, color="random", *interface_attributes):
         GameObject.visibility.append(self)
-        self.__x = x
-        self.__y = y
-        self.__color = color
+        self.x = x
+        self.y = y
+        self.__color = color if color != "random" else (random(0, 255), random(0, 255), random(0, 255))
         #Запускаем инит интерфейса
         if len(self.__class__.__bases__) > 1:
             self.__class__.__bases__[1].__init__(self, *interface_attributes)
+            self._install_hitboxes()
+        else:
+            raise AttributeError ("needs a form interface")
 
     def __die(self):
         self.__dict__ = {}
@@ -81,48 +85,45 @@ class GameObject:
     def computation(self):
         self._install_hitboxes()
 
-    def object_location_relative_to_me(self, object):
-        pass
-
     @classmethod
     def delete_all(cls):
         for object in cls.visibility:
             object.__die()
 
     @property
-    def x(self): return self.__x
-
-    @property
-    def y(self): return self.__y
-
-    @property
     def color(self): return self.__color
 
 
-class Circle:
-    """Интерфейс кружочка-образной формы"""
-    def __init__(self, radius):
+class FormInterface:
+    @staticmethod
+    def get_points_distance(first_point, second_point):
+        return int(math.sqrt((second_point[0]-first_point[0])**2+(second_point[1]-first_point[1])**2))
+
+
+class Circle(FormInterface):
+    """Интерфейс кружочко-образной формы"""
+    def __init__(self, radius=7):
         self.__radius = radius
 
     def _install_hitboxes(self):
-        self.__hitboxes = []
+        self.hitboxes = []
         for i in range(360):
-            vec = pygame.math.Vector2(0, -40).rotate(i)
-            self.__hitboxes.append([int(self.x+self.__radius//2+vec.x), int(self.y+self.__radius[0]//2+vec.y)])
+            vec = pygame.math.Vector2(0, self.__radius).rotate(i)
+            self.hitboxes.append([int(self.x+vec.x), int(self.y+vec.y)])
 
     def draw(self, surface):
-        pygame.draw.circle(surface, self.color, (self.x, self.y, self.__radius))
+        pygame.draw.circle(surface, self.color, (self.x, self.y), self.__radius)
 
 
-class Square:
-    """Интерфейс квадраТыной формы"""
-    def __init__(self, size_of_sides):
+class Square(FormInterface):
+    """Интерфейс квадратной формы"""
+    def __init__(self, size_of_sides=12):
         self.__size_of_sides = size_of_sides
 
     def _install_hitboxes(self):
-        self.__hitboxes = []
+        self.hitboxes = []
         for i in range(self.__size_of_sides):
-            self.__hitboxes.extend([
+            self.hitboxes.extend([
                 (self.x-self.__size_of_sides//2+i, self.y-self.__size_of_sides//2),
                 (self.x-self.__size_of_sides//2+i, self.y+self.__size_of_sides//2),
                 (self.x-self.__size_of_sides//2, self.y-self.__size_of_sides//2+i),
@@ -134,8 +135,8 @@ class Square:
             surface,
             self.color,
             (
-                self.x-self.__size_of_sides//2,
-                self.y-self.__size_of_sides//2,
+                self.x,
+                self.y,
                 self.__size_of_sides,
                 self.__size_of_sides
             )
@@ -144,18 +145,53 @@ class Square:
 
 class GameZone(GameObject, Square):
     """Игровая поверхность игры"""
+    def __repr__(self): return "GameZone"
+
+
+class Quark(GameObject, Circle):
+    """Абстрактный класс частиц"""
+    def __init__(self, speed, radar_range, *atr):
+        super().__init__(*atr)
+        self.__speed = speed
+        self.__radar_range = radar_range
+
+    def __interacting_with_nearby_objects(self):
+        objects_nearby = self.get_objects_near_me()
+
+    def move(self, direction: str, speed_factor=1):
+        if "left" in direction: self.x -= self.__speed*speed_factor
+        if "right" in direction: self.x += self.__speed*speed_factor
+        if "up" in direction: self.y -= self.__speed*speed_factor
+        if "down" in direction: self.y += self.__speed*speed_factor
+
+    def get_objects_near_me(self):
+        objects = []
+        for object in GameObject.visibility:
+            if object != self:
+                for point in object.hitboxes:
+                    if (self.x + self.__radar_range >= point[0] >= self.x - self.__radar_range
+                    and self.y + self.__radar_range >= point[1] >= self.y - self.__radar_range):
+                        objects.append(object)
+                        break
+        return objects
+
+    def get_distance_from_object(self, object):
+        distances = []
+        for self_point in self.hitboxes:
+            for object_point in object.hitboxes:
+                distances.append(self.get_points_distance(self_point, object_point))
+        return min(distances)
+
     def computation(self):
         super().computation()
-
-
-class CircleMan(GameObject, Circle):
-    pass
+        self.__interacting_with_nearby_objects()
 
 
 def set_initial_game_scene():
     GameObject.delete_all()
 
     GameZone(-500, -500, (40, 40, 40), 1000)
+    Quark(5, 50, 220, 180)
 
 
 if __name__ == "__main__":
