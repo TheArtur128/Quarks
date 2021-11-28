@@ -1,4 +1,4 @@
-import math
+from math import sqrt
 from os import path
 
 import pygame
@@ -78,7 +78,7 @@ class GameObject:
         else:
             raise AttributeError ("needs a form interface")
 
-    def __die(self):
+    def die(self):
         self.__dict__ = {}
         self.__class__.visibility.remove(self)
 
@@ -88,7 +88,7 @@ class GameObject:
     @classmethod
     def delete_all(cls):
         for object in cls.visibility:
-            object.__die()
+            object.die()
 
     @property
     def color(self): return self.__color
@@ -97,22 +97,48 @@ class GameObject:
 class FormInterface:
     @staticmethod
     def get_points_distance(first_point, second_point):
-        return int(math.sqrt((second_point[0]-first_point[0])**2+(second_point[1]-first_point[1])**2))
+        return int(sqrt((second_point[0]-first_point[0])**2+(second_point[1]-first_point[1])**2))
+
+    @staticmethod
+    def get_points_distance_by_coordinates(first_point, second_point):
+        x = first_point[0] - second_point[0]
+        y = first_point[1] - second_point[1]
+        return [x, y]
+
+    @staticmethod
+    def get_distance_of_vector(vector):
+        return FormInterface.get_points_distance(vector, [0, 0])
+
+    @staticmethod
+    def get_minimal_vector(*vectors):
+        distances = [FormInterface.get_distance_of_vector(vector) for vector in vectors]
+        return vectors[distances.index(min(distances))]
+
+    @staticmethod
+    def sorting_duplicate_values(list):
+        for value in list:
+            if list.count(value) > 1:
+                while True:
+                    if list.count(value) > 1:
+                        list.remove(value)
+                    else:
+                        break
 
 
 class Circle(FormInterface):
     """Интерфейс кружочко-образной формы"""
     def __init__(self, radius=7):
-        self.__radius = radius
+        self.radius = radius
 
     def _install_hitboxes(self):
         self.hitboxes = []
         for i in range(360):
-            vec = pygame.math.Vector2(0, self.__radius).rotate(i)
+            vec = pygame.math.Vector2(0, self.radius).rotate(i)
             self.hitboxes.append([int(self.x+vec.x), int(self.y+vec.y)])
+        self.sorting_duplicate_values(self.hitboxes)
 
     def draw(self, surface):
-        pygame.draw.circle(surface, self.color, (self.x, self.y), self.__radius)
+        pygame.draw.circle(surface, self.color, (self.x, self.y), self.radius)
 
 
 class Square(FormInterface):
@@ -129,6 +155,7 @@ class Square(FormInterface):
                 (self.x-self.__size_of_sides//2, self.y-self.__size_of_sides//2+i),
                 (self.x-self.__size_of_sides//2, self.y+self.__size_of_sides//2-i)
             ])
+        self.sorting_duplicate_values(self.hitboxes)
 
     def draw(self, surface):
         pygame.draw.rect(
@@ -149,20 +176,22 @@ class GameZone(GameObject, Square):
 
 
 class Quark(GameObject, Circle):
-    """Абстрактный класс частиц"""
-    def __init__(self, speed, radar_range, *atr):
+    """Абстрактный класс частиц без взаимодейсвием с другими обьектами"""
+    def __init__(self, speed: int, radar_range: int, *atr):
         super().__init__(*atr)
-        self.__speed = speed
+        self.speed = speed
         self.__radar_range = radar_range
 
-    def __interacting_with_nearby_objects(self):
-        objects_nearby = self.get_objects_near_me()
+    def absorption(self, object):
+        self.radius += object.speed//3
+        self.speed += object.speed//3
+        object.die()
 
-    def move(self, direction: str, speed_factor=1):
-        if "left" in direction: self.x -= self.__speed*speed_factor
-        if "right" in direction: self.x += self.__speed*speed_factor
-        if "up" in direction: self.y -= self.__speed*speed_factor
-        if "down" in direction: self.y += self.__speed*speed_factor
+    def move(self, direction: str, factor=1):
+        if "left" in direction: self.x -= self.speed*factor
+        if "right" in direction: self.x += self.speed*factor
+        if "up" in direction: self.y -= self.speed*factor
+        if "down" in direction: self.y += self.speed*factor
 
     def get_objects_near_me(self):
         objects = []
@@ -176,29 +205,64 @@ class Quark(GameObject, Circle):
         return objects
 
     def get_distance_from_object(self, object):
-        distances = []
+        min_distance = None
+        min_vector = None
         for self_point in self.hitboxes:
             for object_point in object.hitboxes:
-                distances.append(self.get_points_distance(self_point, object_point))
-        return min(distances)
+                try:
+                    if self.get_points_distance(self_point, object_point) < min_distance:
+                        min_distance = self.get_points_distance(self_point, object_point)
+                        min_vector = self.get_points_distance_by_coordinates(self_point, object_point)
+                except TypeError:
+                    min_distance = self.get_points_distance(self_point, object_point)
+                    min_vector = self.get_points_distance_by_coordinates(self_point, object_point)
+
+        return min_vector
 
     def computation(self):
         super().computation()
-        self.__interacting_with_nearby_objects()
+        if self.get_objects_near_me() != []:
+            self._interacting_with_nearby_objects()
+
+
+class Gravitational(Quark, Circle):
+    def _interacting_with_nearby_objects(self):
+        vectors = []
+        for object in self.get_objects_near_me():
+            vectors.append(self.get_distance_from_object(object))
+            if self.x//self.radius == object.x//self.radius:
+                self.absorption(object)
+
+        vector = self.get_minimal_vector(*vectors)
+        self.move(
+            f'{("left" if vector[0] > 0 else "right")}-{("up" if vector[1] > 0 else "down")}',
+        )
+
+
+class AntiGravitational(Quark, Circle):
+    def _interacting_with_nearby_objects(self):
+        vectors = [self.get_distance_from_object(object) for object in self.get_objects_near_me()]
+        vector = self.get_minimal_vector(*vectors)
+        self.move(
+            f'{("left" if vector[0] < 0 else "right")}-{("up" if vector[1] < 0 else "down")}',
+        )
 
 
 def set_initial_game_scene():
     GameObject.delete_all()
 
     GameZone(-500, -500, (40, 40, 40), 1000)
-    Quark(5, 50, 220, 180)
+    Gravitational(10, 100, 150, 80)
+    Gravitational(10, 100, 350, 280)
+    AntiGravitational(10, 100, 250, 180)
+    AntiGravitational(10, 100, 275, 180)
 
 
 if __name__ == "__main__":
     App(
         caption="Quarks",
         size=[480, 360],
-        FPS=60,
+        FPS=30,
         computation_zones=[GameObject.visibility],
         icon=pygame.image.load(f"{path.dirname(path.abspath(__file__))}/material/icon.png"), #Автор иконок: https://www.freepik.com from https://www.flaticon.com/ru/
         initial_game_scene=set_initial_game_scene
